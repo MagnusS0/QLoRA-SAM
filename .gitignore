@@ -204,6 +204,6 @@ pyrightconfig.json
 .history
 .ionide
 
-### Training results ###
-./results
-./logs
+# Training Output
+results/
+logs/

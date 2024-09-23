@@ -18,18 +18,21 @@ def main(args):
     train_ds = COCODataset(
         root_dir=os.path.join(args.root_dir, 'train'),
         annotation_file=args.train_annotation_file,
-        processor=processor
+        processor=processor,
+        no_prompt=args.no_prompt
     )
     val_ds = COCODataset(
         root_dir=os.path.join(args.root_dir, 'val'),
         annotation_file=args.val_annotation_file,
-        processor=processor
+        processor=processor,
+        no_prompt=args.no_prompt
     )
     if args.test_annotation_file is not None:
         test_ds = COCODataset(
             root_dir=os.path.join(args.root_dir, 'test'),
             annotation_file=args.test_annotation_file,
-            processor=processor
+            processor=processor,
+            no_prompt=args.no_prompt
         )
 
     # Training arguments
@@ -72,6 +75,9 @@ def main(args):
     # Start training
     trainer.train()
 
+    model.save_pretrained(os.path.join(args.output_dir, 'qlora_model'), save_adapter=True, save_config=True)
+    processor.save_pretrained(os.path.join(args.output_dir, 'qlora_model')) # Save the processor config
+
     # Evaluate the model on the test set
     if args.test_annotation_file is not None:
         trainer.evaluate(test_dataset=test_ds)
@@ -96,5 +102,6 @@ if __name__ == "__main__":
     parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
     parser.add_argument("--eval_steps", type=int, default=500, help="Run evaluation every X steps.")
     parser.add_argument("--save_total_limit", type=int, default=2, help="Limit the total amount of checkpoints.")
+    parser.add_argument("--no_prompt", type=bool, default=False, help="Disable prompts and train for automated segmentation.")
     args = parser.parse_args()
     main(args)

@@ -7,10 +7,11 @@ from transformers import SamProcessor
 from PIL import Image
 
 class COCODataset(Dataset):
-    def __init__(self, root_dir, annotation_file, processor: SamProcessor):
+    def __init__(self, root_dir, annotation_file, processor: SamProcessor, no_prompt=False):
         self.root_dir = root_dir
         self.coco = COCO(annotation_file)
         self.image_ids = list(self.coco.imgs.keys())
+        self.no_prompt = no_prompt
 
         # Filter out image_ids without any annotations
         self.image_ids = [
@@ -45,6 +46,18 @@ class COCODataset(Dataset):
         if not bboxes or not masks:
             # Skip images without valid annotations
             return self.__getitem__((idx + 1) % len(self))
+        
+        if self.no_prompt:
+            # Skip prompt generation
+            inputs = self.processor(
+                images=image,
+                segmentation_maps=masks[0],  # Use the first mask
+                input_points=None,
+                input_labels=None,
+                input_boxes=None,
+                return_tensors="pt",
+            )
+            return inputs
 
         # Select one mask and bbox for simplicity (you can modify to handle multiple)
         mask = masks[0]
@@ -83,6 +96,5 @@ class COCODataset(Dataset):
             return_tensors="pt",
         )
 
-        # Return inputs as a dictionary
         return inputs
     
