@@ -8,9 +8,9 @@ This project is designed to fine-tune the SAM model on the COCO dataset format u
 
 ## Key Features
 
-- **PEFT (Parameter-Efficient Fine-Tuning)**: Uses PEFT to fine-tune the transformer parts of the model, adjust what layers and type of adapters you want to use.
-- **Bitsandbytes**: Utilizes bitsandbytes for quantization, enabling efficient 4-bit training to handle large models with less memory.
-- **COCO Dataset Format**: Works with datasets in the COCO format, this is a straight adoption from the [Lightning-SAM](https://github.com/luca-medeiros/lightning-sam) repo, slightly adopted to work with the Transformers library. 
+- **PEFT (Parameter-Efficient Fine-Tuning)**: Uses the PEFT library to fine-tune with fewer paramaters, choose LoRA, DoRA, Adapters etc.
+- **Bitsandbytes**: Utilizes bitsandbytes for quantization, enabling efficient 4-bit training, can be used for QLoRA e.g.
+- **COCO Dataset Format**: Works with datasets in the COCO format, this is a straight adoption from the [Lightning-SAM](https://github.com/luca-medeiros/lightning-sam) repo, slightly adopted to work with the Transformers library. I've also added the option for "no prompt" for **auto-mask** training.
 
 ## Installation
 
