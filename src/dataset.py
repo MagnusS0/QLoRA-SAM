@@ -12,12 +12,12 @@ class COCODataset(Dataset):
         self.coco = COCO(annotation_file)
         self.image_ids = list(self.coco.imgs.keys())
         self.no_prompt = no_prompt
+        self.processor = processor
 
         # Filter out image_ids without any annotations
         self.image_ids = [
             image_id for image_id in self.image_ids if len(self.coco.getAnnIds(imgIds=image_id)) > 0
         ]
-        self.processor = processor
 
     def __len__(self):
         return len(self.image_ids)
@@ -32,8 +32,6 @@ class COCODataset(Dataset):
         anns = self.coco.loadAnns(ann_ids)
         bboxes = []
         masks = []
-        points = []
-        labels = []
 
         for ann in anns:
             if ann['iscrowd']:
@@ -46,55 +44,67 @@ class COCODataset(Dataset):
         if not bboxes or not masks:
             # Skip images without valid annotations
             return self.__getitem__((idx + 1) % len(self))
-        
-        if self.no_prompt:
+
+        # Create segmentation_map by combining masks with label 1
+        segmentation_map = np.zeros_like(masks[0], dtype=np.uint8)
+        for mask in masks:
+            segmentation_map[mask == 1] = 1  # Binary labels (1 for object)
+
+        # Initialize fields
+        input_points = None
+        input_labels = None
+        input_boxes = None
+
+        if not self.no_prompt:
+            use_bbox = len(bboxes) > 0
+
+            if use_bbox:
+                # Use bounding boxes as prompts
+                labels_prompt = [1] * len(bboxes)  # Labels set to 1 for all boxes
+                # Prepare inputs using the processor
+                processed = self.processor(
+                    images=image,
+                    segmentation_maps=masks,
+                    input_points=None,
+                    input_labels=[labels_prompt],    
+                    input_boxes=[bboxes],           
+                    return_tensors="pt",
+                )
+            else:
+                # No bounding boxes, generate point prompts
+                points = []
+                labels_prompt = []
+                for mask in masks:
+                    y_indices, x_indices = np.where(mask)
+                    if len(y_indices) == 0:
+                        continue  # Skip empty mask
+                    idx_point = np.random.choice(len(y_indices))
+                    y_point, x_point = y_indices[idx_point], x_indices[idx_point]
+                    points.append([float(x_point), float(y_point)])
+                    labels_prompt.append(1)  # Label '1' for positive points
+
+                if not points:
+                    # No valid points found, skip sample
+                    return self.__getitem__((idx + 1) % len(self))
+
+                # Prepare inputs using the processor
+                processed = self.processor(
+                    images=image,
+                    segmentation_maps=segmentation_map,
+                    input_points=[points],      # List of points
+                    input_labels=[labels_prompt],  # List of labels
+                    input_boxes=None,
+                    return_tensors="pt",
+                )
+        else:
             # Skip prompt generation
-            inputs = self.processor(
+            processed = self.processor(
                 images=image,
-                segmentation_maps=masks[0],  # Use the first mask
+                segmentation_maps=segmentation_map,
                 input_points=None,
                 input_labels=None,
                 input_boxes=None,
                 return_tensors="pt",
             )
-            return inputs
 
-        # Select one mask and bbox for simplicity (you can modify to handle multiple)
-        mask = masks[0]
-        bbox = bboxes[0]
-
-        # Generate a point inside the mask
-        y_indices, x_indices = np.where(mask)
-        if len(y_indices) == 0:
-            # Handle empty masks (skip this sample)
-            return self.__getitem__((idx + 1) % len(self))
-        idx_point = np.random.choice(len(y_indices))
-        y_point, x_point = y_indices[idx_point], x_indices[idx_point]
-        points.append([float(x_point), float(y_point)])
-        labels.append(1) 
-
-        use_bbox = len(bboxes) > 0
-
-        if use_bbox:
-            # Use the first bounding box
-            prompt_boxes = [bboxes[0]]
-            prompt_points = []  # No points
-            prompt_labels = []  # No labels
-        else:
-            # Use the first point
-            prompt_boxes = []  # No boxes
-            prompt_points = [points[0]]
-            prompt_labels = [labels[0]]
-
-        # Prepare inputs using the processor
-        inputs = self.processor(
-            images=image,
-            segmentation_maps=masks[0] if masks else None,  # Use the first mask
-            input_points=[[prompt_points]] if prompt_points else None,
-            input_labels=[[prompt_labels]] if prompt_labels else None,
-            input_boxes=[[prompt_boxes]] if prompt_boxes else None,
-            return_tensors="pt",
-        )
-
-        return inputs
-    
+        return processed

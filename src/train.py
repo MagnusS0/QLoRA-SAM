@@ -12,7 +12,7 @@ def main(args):
     processor = SamProcessor.from_pretrained(args.model_path)
 
     # Initialize the model
-    model = configure_lora_model(args.model_path)
+    model = configure_lora_model(args.model_path, quant=True)
 
     # Prepare datasets
     train_ds = COCODataset(
@@ -41,10 +41,11 @@ def main(args):
         per_device_train_batch_size=args.train_batch_size,
         per_device_eval_batch_size=args.eval_batch_size,
         dataloader_num_workers=args.data_loader_num_workers,
+        gradient_accumulation_steps=8,
         num_train_epochs=args.num_train_epochs,
         learning_rate=args.learning_rate,
         lr_scheduler_type='cosine',
-        warmup_steps=args.warmup_steps,
+        warmup_ratio=args.warmup_ratio,
         optim='lion_8bit',
         weight_decay=args.weight_decay,
         bf16=True,
@@ -95,13 +96,13 @@ if __name__ == "__main__":
     parser.add_argument("--data_loader_num_workers", type=int, default=4, help="Number of workers for the DataLoader.")
     parser.add_argument("--num_train_epochs", type=int, default=3, help="Total number of training epochs.")
     parser.add_argument("--learning_rate", type=float, default=5e-5, help="Learning rate for the optimizer.")
-    parser.add_argument("--warmup_steps", type=int, default=500, help="Number of warmup steps for learning rate scheduler.")
+    parser.add_argument("--warmup_ratio", type=int, default=0.1, help="Number of warmup steps for learning rate scheduler.")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay for the optimizer.")
     parser.add_argument("--logging_dir", type=str, default="./logs", help="Directory for TensorBoard logs.")
     parser.add_argument("--logging_steps", type=int, default=100, help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
     parser.add_argument("--eval_steps", type=int, default=500, help="Run evaluation every X steps.")
     parser.add_argument("--save_total_limit", type=int, default=2, help="Limit the total amount of checkpoints.")
-    parser.add_argument("--no_prompt", type=bool, default=False, help="Disable prompts and train for automated segmentation.")
+    parser.add_argument("--no_prompt", action="store_true", help="Disable user prompts for COCO dataset.")
     args = parser.parse_args()
     main(args)
