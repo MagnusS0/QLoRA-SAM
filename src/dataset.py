@@ -90,7 +90,7 @@ class COCODataset(Dataset):
                 # Prepare inputs using the processor
                 processed = self.processor(
                     images=image,
-                    segmentation_maps=segmentation_map,
+                    segmentation_maps=masks,
                     input_points=[points],      # List of points
                     input_labels=[labels_prompt],  # List of labels
                     input_boxes=None,
