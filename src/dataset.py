@@ -7,12 +7,13 @@ from transformers import SamProcessor
 from PIL import Image
 
 class COCODataset(Dataset):
-    def __init__(self, root_dir, annotation_file, processor: SamProcessor, no_prompt=False):
+    def __init__(self, root_dir, annotation_file, processor: SamProcessor, no_prompt=False, dtype=torch.float32):
         self.root_dir = root_dir
         self.coco = COCO(annotation_file)
         self.image_ids = list(self.coco.imgs.keys())
         self.no_prompt = no_prompt
         self.processor = processor
+        self.dtype = dtype
 
         # Filter out image_ids without any annotations
         self.image_ids = [
@@ -106,5 +107,9 @@ class COCODataset(Dataset):
                 input_boxes=None,
                 return_tensors="pt",
             )
+
+        for key in processed:
+            if isinstance(processed[key], torch.Tensor):
+                processed[key] = processed[key].to(self.dtype)
 
         return processed

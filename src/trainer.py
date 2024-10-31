@@ -16,7 +16,7 @@ class CustomTrainer(Trainer):
         self.mse_loss = nn.MSELoss()
         
     
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, num_items_in_batch=None, return_outputs=False):
         """
         Custom compute_loss that includes Focal Loss, Dice Loss, and IoU-based Loss.
         """
