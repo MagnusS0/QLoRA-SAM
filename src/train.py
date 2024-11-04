@@ -8,13 +8,28 @@ from transformers import SamProcessor
 from lora import configure_lora_model
 from utils import collate_fn, memory_runner
 
-def main(args):
-    set_seed(args.seed)  # Set the seed
+def setup_and_train(args):
+    """
+    Set up the training environment and start the training process.
+
+    Args:
+        args: Command-line arguments parsed by argparse.
+    """
+    print(f"Setting seed to {args.seed}")
+    set_seed(args.seed)
+
     # Initialize the processor
     processor = SamProcessor.from_pretrained(args.model_path)
 
-    # Initialize the model
-    model = configure_lora_model(args.model_path, quant=False, train_prompt=False)
+    # Initialize the model with LoRA configurations
+    model = configure_lora_model(
+        model_path=args.model_path,
+        quant=args.quant,
+        train_prompt=False,
+        dora_true=args.dora_true,
+        lora_rank=args.lora_rank,
+        attention=args.attention
+    )
 
     # Prepare datasets
     train_ds = COCODataset(
@@ -49,8 +64,7 @@ def main(args):
         max_grad_norm=1.0,
         learning_rate=args.learning_rate,
         lr_scheduler_type='cosine',
-        #warmup_ratio=args.warmup_ratio,
-        warmup_steps=300,
+        warmup_ratio=args.warmup_ratio,
         optim='lion_8bit',
         weight_decay=args.weight_decay,
         bf16=True,
@@ -73,7 +87,7 @@ def main(args):
     trainer = CustomTrainer(
         model=model,
         args=training_args,
-        data_collator=collate_fn,  # Collation is handled by the DataLoader
+        data_collator=collate_fn,
         train_dataset=train_ds,
         eval_dataset=val_ds,
         callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
@@ -84,17 +98,25 @@ def main(args):
 
     # Start training
     torch.cuda.reset_peak_memory_stats()
-    memory_runner(os.path.join(args.output_dir, 'memory_snapshot.pickle'), trainer.train)
-    memory_usage = torch.cuda.max_memory_allocated() / (1024 ** 2)
-    print(f"Memory usage: {memory_usage:.2f} MB")
+    trainer.train()
 
-    model.save_pretrained(os.path.join(args.output_dir, 'qlora_model'), save_adapter=True, save_config=True)
-    processor.save_pretrained(os.path.join(args.output_dir, 'qlora_model')) # Save the processor config
+    print("Peak memory usage:", torch.cuda.max_memory_allocated() / (1024 ** 2))
+    # Save model
+    trainer.save_model(os.path.join(args.output_dir, 'qlora_model'))
+    processor.save_pretrained(os.path.join(args.output_dir, 'qlora_model'))
 
-    # Evaluate the model on the test set
-    if args.test_annotation_file is not None:
-        trainer.evaluate(test_dataset=test_ds)
+def main(args):
+    """
+    Main function that runs the training process.
 
+    Args:
+        args: Command-line arguments parsed by argparse.
+    """
+    memory_runner(
+        os.path.join(args.output_dir, 'memory_snapshot.pickle'),
+        setup_and_train,
+        args
+    )
     print(f"Finished training with seed {args.seed}")
 
 if __name__ == "__main__":
@@ -120,5 +142,9 @@ if __name__ == "__main__":
     parser.add_argument("--no_prompt", action="store_true", help="Disable user prompts for COCO dataset.")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=32, help="Number of gradient accumulation steps.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
+    parser.add_argument("--quant", type=bool, default=False, help="Whether to apply quantization.")
+    parser.add_argument("--dora_true", type=bool, default=True, help="Whether to use Dora in LoRA configuration.")
+    parser.add_argument("--lora_rank", type=int, default=128, help="Rank for LoRA adaptation.")
+    parser.add_argument("--attention", type=str, default="sdpa", choices=["sdpa", "eager"], help="Attention implementation to use.")
     args = parser.parse_args()
     main(args)
