@@ -1,7 +1,39 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from transformers.models.sam.modeling_sam import SamVisionAttention
+import pickle
+
+def memory_runner(path, fn, *args, **kwargs):
+    print("Start memory recording")
+    torch.cuda.synchronize()
+    torch.cuda.memory._record_memory_history(
+        enabled=True,
+        trace_alloc_max_entries=100000,           
+        trace_alloc_record_context=True,
+    )
+    result = fn(*args, **kwargs)
+    torch.cuda.synchronize()
+    snapshot = torch.cuda.memory._snapshot()
+    print("Finish memory recording")
+    with open(path, 'wb') as f:
+        pickle.dump(snapshot, f)
+    # Use to convert pickle file into html
+    # python torch/cuda/_memory_viz.py trace_plot <snapshot>.pickle -o <snapshot>.html
+    return result
 
 def calc_iou(pred_mask: torch.Tensor, gt_mask: torch.Tensor):
+    """
+    Calculate the Intersection over Union (IoU) between predicted and ground truth masks.
+
+    Args:
+        pred_mask (torch.Tensor): Predicted mask tensor.
+        gt_mask (torch.Tensor): Ground truth mask tensor.
+
+    Returns:
+        torch.Tensor: IoU scores for each sample in the batch.
+    """
     pred_mask = (pred_mask >= 0.5).float()
 
     intersection = torch.sum(pred_mask * gt_mask, dim=(3, 4))
@@ -14,6 +46,15 @@ def calc_iou(pred_mask: torch.Tensor, gt_mask: torch.Tensor):
 
 
 def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, Optional[torch.Tensor]]:
+    """
+    Custom collate function for DataLoader to handle variable size inputs.
+
+    Args:
+        batch (List[Dict[str, torch.Tensor]]): List of samples from the dataset.
+
+    Returns:
+        Dict[str, Optional[torch.Tensor]]: Batched data.
+    """
     batch_dict = {
         'pixel_values': torch.stack([item['pixel_values'].squeeze() for item in batch]),
         'original_sizes': torch.stack([item['original_sizes'] for item in batch]),

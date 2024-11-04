@@ -7,12 +7,23 @@ from transformers import SamProcessor
 from PIL import Image
 
 class COCODataset(Dataset):
-    def __init__(self, root_dir, annotation_file, processor: SamProcessor, no_prompt=False):
+    """
+    PyTorch Dataset for the COCO style datasets for SAM model training.
+
+    Args:
+        root_dir (str): Root directory containing images.
+        annotation_file (str): Path to the COCO annotation file.
+        processor (SamProcessor): Processor for preparing the data.
+        no_prompt (bool): If True, prompts are not used.
+        dtype (torch.dtype): Data type for tensors.
+    """
+    def __init__(self, root_dir, annotation_file, processor: SamProcessor, no_prompt=False, dtype=torch.float32):
         self.root_dir = root_dir
         self.coco = COCO(annotation_file)
         self.image_ids = list(self.coco.imgs.keys())
         self.no_prompt = no_prompt
         self.processor = processor
+        self.dtype = dtype
 
         # Filter out image_ids without any annotations
         self.image_ids = [
@@ -61,7 +72,6 @@ class COCODataset(Dataset):
             if use_bbox:
                 # Use bounding boxes as prompts
                 labels_prompt = [1] * len(bboxes)  # Labels set to 1 for all boxes
-                # Prepare inputs using the processor
                 processed = self.processor(
                     images=image,
                     segmentation_maps=masks,
@@ -71,13 +81,13 @@ class COCODataset(Dataset):
                     return_tensors="pt",
                 )
             else:
-                # No bounding boxes, generate point prompts
+                # Generate random point prompts
                 points = []
                 labels_prompt = []
                 for mask in masks:
                     y_indices, x_indices = np.where(mask)
                     if len(y_indices) == 0:
-                        continue  # Skip empty mask
+                        continue 
                     idx_point = np.random.choice(len(y_indices))
                     y_point, x_point = y_indices[idx_point], x_indices[idx_point]
                     points.append([float(x_point), float(y_point)])
@@ -91,8 +101,8 @@ class COCODataset(Dataset):
                 processed = self.processor(
                     images=image,
                     segmentation_maps=masks,
-                    input_points=[points],      # List of points
-                    input_labels=[labels_prompt],  # List of labels
+                    input_points=[points],     
+                    input_labels=[labels_prompt],
                     input_boxes=None,
                     return_tensors="pt",
                 )
@@ -106,5 +116,9 @@ class COCODataset(Dataset):
                 input_boxes=None,
                 return_tensors="pt",
             )
+
+        for key in processed:
+            if isinstance(processed[key], torch.Tensor):
+                processed[key] = processed[key].to(self.dtype)
 
         return processed

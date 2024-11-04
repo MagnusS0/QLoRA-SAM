@@ -1,18 +1,35 @@
 import argparse
 import os
-from transformers import TrainingArguments
+import torch
+from transformers import TrainingArguments, set_seed, EarlyStoppingCallback
 from trainer import CustomTrainer
 from dataset import COCODataset
-from transformers import SamProcessor, SamModel
+from transformers import SamProcessor
 from lora import configure_lora_model
-from utils import collate_fn
+from utils import collate_fn, memory_runner
 
-def main(args):
+def setup_and_train(args):
+    """
+    Set up the training environment and start the training process.
+
+    Args:
+        args: Command-line arguments parsed by argparse.
+    """
+    print(f"Setting seed to {args.seed}")
+    set_seed(args.seed)
+
     # Initialize the processor
     processor = SamProcessor.from_pretrained(args.model_path)
 
-    # Initialize the model
-    model = configure_lora_model(args.model_path, quant=True)
+    # Initialize the model with LoRA configurations
+    model = configure_lora_model(
+        model_path=args.model_path,
+        quant=args.quant,
+        train_prompt=False,
+        dora_true=args.dora_true,
+        lora_rank=args.lora_rank,
+        attention=args.attention
+    )
 
     # Prepare datasets
     train_ds = COCODataset(
@@ -41,8 +58,10 @@ def main(args):
         per_device_train_batch_size=args.train_batch_size,
         per_device_eval_batch_size=args.eval_batch_size,
         dataloader_num_workers=args.data_loader_num_workers,
-        gradient_accumulation_steps=8,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         num_train_epochs=args.num_train_epochs,
+        skip_memory_metrics=False,
+        max_grad_norm=1.0,
         learning_rate=args.learning_rate,
         lr_scheduler_type='cosine',
         warmup_ratio=args.warmup_ratio,
@@ -51,37 +70,54 @@ def main(args):
         bf16=True,
         logging_dir=args.logging_dir,
         logging_steps=args.logging_steps,
-        save_steps=args.save_steps,
-        eval_steps=args.eval_steps,
-        eval_strategy='steps',
+        save_steps=args.save_steps//args.gradient_accumulation_steps,
+        eval_steps=args.eval_steps//args.gradient_accumulation_steps,
+        eval_strategy='epoch',
+        save_strategy='epoch',
         load_best_model_at_end=True,
         metric_for_best_model="eval_mean_iou",
         greater_is_better=True,
         report_to='tensorboard',
         save_total_limit=args.save_total_limit,
+        gradient_checkpointing=True,
+        seed=args.seed,
     )
 
     # Initialize the Trainer
     trainer = CustomTrainer(
         model=model,
         args=training_args,
-        data_collator=collate_fn,  # Collation is handled by the DataLoader
+        data_collator=collate_fn,
         train_dataset=train_ds,
         eval_dataset=val_ds,
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
     )
 
     if args.test_annotation_file is not None:
         trainer.test_dataset = test_ds
 
     # Start training
+    torch.cuda.reset_peak_memory_stats()
     trainer.train()
 
-    model.save_pretrained(os.path.join(args.output_dir, 'qlora_model'), save_adapter=True, save_config=True)
-    processor.save_pretrained(os.path.join(args.output_dir, 'qlora_model')) # Save the processor config
+    print("Peak memory usage:", torch.cuda.max_memory_allocated() / (1024 ** 2))
+    # Save model
+    trainer.save_model(os.path.join(args.output_dir, 'qlora_model'))
+    processor.save_pretrained(os.path.join(args.output_dir, 'qlora_model'))
 
-    # Evaluate the model on the test set
-    if args.test_annotation_file is not None:
-        trainer.evaluate(test_dataset=test_ds)
+def main(args):
+    """
+    Main function that runs the training process.
+
+    Args:
+        args: Command-line arguments parsed by argparse.
+    """
+    memory_runner(
+        os.path.join(args.output_dir, 'memory_snapshot.pickle'),
+        setup_and_train,
+        args
+    )
+    print(f"Finished training with seed {args.seed}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a model on the COCO dataset.")
@@ -96,13 +132,19 @@ if __name__ == "__main__":
     parser.add_argument("--data_loader_num_workers", type=int, default=4, help="Number of workers for the DataLoader.")
     parser.add_argument("--num_train_epochs", type=int, default=3, help="Total number of training epochs.")
     parser.add_argument("--learning_rate", type=float, default=5e-5, help="Learning rate for the optimizer.")
-    parser.add_argument("--warmup_ratio", type=int, default=0.1, help="Number of warmup steps for learning rate scheduler.")
+    parser.add_argument("--warmup_ratio", type=float, default=0.1, help="Number of warmup steps for learning rate scheduler.")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay for the optimizer.")
     parser.add_argument("--logging_dir", type=str, default="./logs", help="Directory for TensorBoard logs.")
-    parser.add_argument("--logging_steps", type=int, default=100, help="Log every X updates steps.")
+    parser.add_argument("--logging_steps", type=int, default=50, help="Log every X updates steps.")
     parser.add_argument("--save_steps", type=int, default=500, help="Save checkpoint every X updates steps.")
     parser.add_argument("--eval_steps", type=int, default=500, help="Run evaluation every X steps.")
     parser.add_argument("--save_total_limit", type=int, default=2, help="Limit the total amount of checkpoints.")
     parser.add_argument("--no_prompt", action="store_true", help="Disable user prompts for COCO dataset.")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=32, help="Number of gradient accumulation steps.")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
+    parser.add_argument("--quant", type=bool, default=False, help="Whether to apply quantization.")
+    parser.add_argument("--dora_true", type=bool, default=True, help="Whether to use Dora in LoRA configuration.")
+    parser.add_argument("--lora_rank", type=int, default=128, help="Rank for LoRA adaptation.")
+    parser.add_argument("--attention", type=str, default="sdpa", choices=["sdpa", "eager"], help="Attention implementation to use.")
     args = parser.parse_args()
     main(args)
